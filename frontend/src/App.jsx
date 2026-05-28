@@ -1,56 +1,44 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import VirtualGardenScene from "./components/VirtualGardenScene";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const DEFAULT_SCENARIO = "healthy_garden";
 
-const observationMetrics = {
-  plant_health_index: "Health index",
-  dryness_score: "Dry look",
-  wilt_score: "Wilt look",
-  crowding_score: "Crowding",
-  neglect_score: "Neglect cues",
-  reservoir_check_score: "Reservoir check",
-};
+function formatLabel(value) {
+  return String(value || "unknown").replaceAll("_", " ");
+}
 
-const twinLabels = {
-  workplace_area_condition: "Workplace area",
-  plant_appearance: "Plant appearance",
-  reservoir_attention: "Reservoir attention",
-  team_engagement: "Team engagement",
-  maintenance_urgency: "Maintenance urgency",
-};
+function stripDataUrl(dataUrl) {
+  return dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+}
 
-function statusClass(status) {
-  return `status status-${status}`;
+function statusClass(value) {
+  return `pill pill-${String(value || "low").toLowerCase()}`;
 }
 
 function App() {
-  const [snapshot, setSnapshot] = useState(null);
-  const [explanation, setExplanation] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [cameraOn, setCameraOn] = useState(false);
+  const [agentResponse, setAgentResponse] = useState(null);
+  const [previewImage, setPreviewImage] = useState("");
+  const [imageBase64, setImageBase64] = useState("");
+  const [imageName, setImageName] = useState("");
+  const [scenarioNames, setScenarioNames] = useState([]);
+  const [selectedScenario, setSelectedScenario] = useState(DEFAULT_SCENARIO);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cameraOn, setCameraOn] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
-  async function loadDemoState() {
+  async function loadScenario(scenarioName = selectedScenario) {
     try {
+      setLoading(true);
       setError("");
-      const [snapshotResponse, explanationResponse] = await Promise.all([
-        fetch(`${API_BASE}/snapshot`),
-        fetch(`${API_BASE}/explain`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ include_ai: true }),
-        }),
-      ]);
-
-      if (!snapshotResponse.ok || !explanationResponse.ok) {
-        throw new Error("Backend returned an error");
+      const response = await fetch(`${API_BASE}/api/demo/scenario/${scenarioName}`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Scenario request failed (${response.status})`);
       }
-
-      setSnapshot(await snapshotResponse.json());
-      setExplanation(await explanationResponse.json());
+      setAgentResponse(await response.json());
+      setSelectedScenario(scenarioName);
     } catch (currentError) {
       setError(currentError.message);
     } finally {
@@ -58,35 +46,50 @@ function App() {
     }
   }
 
-  async function analyzeImage(imageDataUrl, imageName, source) {
+  async function loadInitialDemo() {
     try {
-      setError("");
       setLoading(true);
-      const imageBase64 = imageDataUrl.includes(",") ? imageDataUrl.split(",")[1] : imageDataUrl;
-      const body = JSON.stringify({
-        image_base64: imageBase64,
-        location_name: imageName,
-        notes: `${source} garden image`,
-      });
-      const [snapshotResponse, explanationResponse] = await Promise.all([
-        fetch(`${API_BASE}/analyze-image`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        }),
-        fetch(`${API_BASE}/explain-image`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-        }),
-      ]);
-
-      if (!snapshotResponse.ok || !explanationResponse.ok) {
-        throw new Error("Image analysis failed");
+      setError("");
+      const response = await fetch(`${API_BASE}/api/demo/scenarios`);
+      if (!response.ok) {
+        throw new Error(`Scenario list failed (${response.status})`);
       }
+      const data = await response.json();
+      const names = data.scenarios || [];
+      setScenarioNames(names);
+      const initialScenario = names.includes(DEFAULT_SCENARIO) ? DEFAULT_SCENARIO : names[0];
+      if (initialScenario) {
+        await loadScenario(initialScenario);
+      }
+    } catch (currentError) {
+      setError(currentError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-      setSnapshot(await snapshotResponse.json());
-      setExplanation(await explanationResponse.json());
+  async function analyzeSelectedImage() {
+    if (!imageBase64) {
+      setError("Upload or capture an image before analyzing.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await fetch(`${API_BASE}/api/vision/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_base64: imageBase64,
+          location_name: imageName || "Workplace tower garden",
+          notes: "Frontend upload or webcam snapshot for GardenSpace AI demo.",
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Image analysis failed (${response.status})`);
+      }
+      setAgentResponse(await response.json());
     } catch (currentError) {
       setError(currentError.message);
     } finally {
@@ -102,9 +105,11 @@ function App() {
 
     const reader = new FileReader();
     reader.onload = () => {
-      const imageDataUrl = String(reader.result || "");
-      setPreview(imageDataUrl);
-      analyzeImage(imageDataUrl, file.name, "upload");
+      const dataUrl = String(reader.result || "");
+      setPreviewImage(dataUrl);
+      setImageBase64(stripDataUrl(dataUrl));
+      setImageName(file.name);
+      setError("");
     };
     reader.readAsDataURL(file);
   }
@@ -119,7 +124,7 @@ function App() {
       }
       setCameraOn(true);
     } catch (currentError) {
-      setError(currentError.message || "Camera permission was not granted");
+      setError(currentError.message || "Camera permission was not granted.");
     }
   }
 
@@ -129,7 +134,7 @@ function App() {
     setCameraOn(false);
   }
 
-  function captureWebcam() {
+  function captureSnapshot() {
     const video = videoRef.current;
     if (!video) {
       return;
@@ -138,179 +143,188 @@ function App() {
     canvas.width = video.videoWidth || 960;
     canvas.height = video.videoHeight || 540;
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageDataUrl = canvas.toDataURL("image/jpeg", 0.86);
-    setPreview(imageDataUrl);
-    analyzeImage(imageDataUrl, `webcam-capture-${Date.now()}.jpg`, "webcam");
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.86);
+    setPreviewImage(dataUrl);
+    setImageBase64(stripDataUrl(dataUrl));
+    setImageName(`webcam-snapshot-${Date.now()}.jpg`);
+    setError("");
   }
 
   useEffect(() => {
-    loadDemoState();
+    loadInitialDemo();
     return () => stopCamera();
   }, []);
 
-  const topRisk = useMemo(() => {
-    if (!snapshot?.risks?.length) {
-      return null;
-    }
-    return [...snapshot.risks].sort((a, b) => b.score - a.score)[0];
-  }, [snapshot]);
-
-  if (loading && !snapshot) {
-    return (
-      <main className="shell">
-        <Style />
-        <section className="hero">
-          <p className="eyebrow">GardenSpace AI</p>
-          <h1>Loading workplace garden view...</h1>
-        </section>
-      </main>
-    );
-  }
+  const observations = agentResponse?.observations;
+  const notification = agentResponse?.notification;
+  const phoneResult = agentResponse?.phone_notification_result;
+  const meeting = agentResponse?.meeting_suggestion;
+  const sceneEvent = agentResponse?.virtual_scene_event || {
+    phone_message_visible: false,
+    phone_title: "",
+    phone_message: "",
+    animation_state: "idle",
+    next_visual_action: "none",
+    event_note: "Simulation waiting for analysis.",
+  };
 
   return (
     <main className="shell">
       <Style />
-      <section className="hero">
+
+      <header className="hero">
         <div>
           <p className="eyebrow">GardenSpace AI</p>
-          <h1>Camera agent for a workplace tower garden</h1>
-          <p className="hero-copy">
-            Friendly visual checks for plant appearance, reservoir attention, and shared workplace care.
-          </p>
+          <h1>Camera-based workplace tower-garden assistant</h1>
         </div>
-        <button className="refresh" onClick={loadDemoState}>Demo refresh</button>
+        <div className="hero-status">
+          <span className="sim-dot" />
+          Simulation only
+        </div>
+      </header>
+
+      {error && <div className="alert">{error}</div>}
+
+      <section className="workspace">
+        <section className="panel input-panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Camera / image</p>
+              <h2>Garden image</h2>
+            </div>
+            {loading && <span className="loading">Working...</span>}
+          </div>
+
+          <div className="preview-frame">
+            {previewImage ? (
+              <img src={previewImage} alt="Selected tower garden preview" />
+            ) : (
+              <div className="preview-placeholder">
+                <div className="mini-tower">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <p>Upload a garden image or capture a webcam snapshot.</p>
+              </div>
+            )}
+            <video ref={videoRef} autoPlay playsInline muted className={cameraOn ? "video-on" : ""} />
+          </div>
+
+          <div className="tool-row">
+            <label className="button-like">
+              Upload image
+              <input type="file" accept="image/*" onChange={handleUpload} />
+            </label>
+            <button onClick={cameraOn ? stopCamera : startCamera}>{cameraOn ? "Stop webcam" : "Start webcam"}</button>
+            <button onClick={captureSnapshot} disabled={!cameraOn}>Snapshot</button>
+            <button className="primary" onClick={analyzeSelectedImage} disabled={!imageBase64 || loading}>Analyze</button>
+          </div>
+          <p className="subtle">Images are sent only to the backend. No OpenAI API key is present in frontend code.</p>
+
+          <div className="scenario-box">
+            <div>
+              <p className="eyebrow">Demo scenario</p>
+              <h2>Run a scripted scene</h2>
+            </div>
+            <div className="scenario-controls">
+              <select value={selectedScenario} onChange={(event) => setSelectedScenario(event.target.value)}>
+                {scenarioNames.length ? (
+                  scenarioNames.map((name) => (
+                    <option value={name} key={name}>{formatLabel(name)}</option>
+                  ))
+                ) : (
+                  <option value={DEFAULT_SCENARIO}>{formatLabel(DEFAULT_SCENARIO)}</option>
+                )}
+              </select>
+              <button onClick={() => loadScenario(selectedScenario)} disabled={!selectedScenario || loading}>Load scenario</button>
+            </div>
+          </div>
+        </section>
+
+        <VirtualGardenScene virtualSceneEvent={sceneEvent} />
       </section>
 
-      {error && <div className="alert">Demo issue: {error}</div>}
-
-      <section className="capture-band">
-        <div className="camera-surface">
-          {preview ? <img src={preview} alt="Uploaded tower garden preview" /> : <div className="demo-scene">
-            <div className="window" />
-            <div className="tower">
-              <span />
-              <span />
-              <span />
-              <span />
+      <section className="result-grid">
+        <ResultCard title="Plant / space status">
+          {observations ? (
+            <div className="status-list">
+              <StatusRow label="Plant health" value={formatLabel(observations.plant_health_status)} />
+              <StatusRow label="Area" value={formatLabel(observations.area_status)} />
+              <StatusRow label="Water check" value={observations.water_check_needed ? "May need checking" : "No check flagged"} />
+              <StatusRow label="Confidence" value={`${Math.round((observations.confidence || 0) * 100)}%`} />
             </div>
-            <div className="reservoir" />
-          </div>}
-          <video ref={videoRef} autoPlay playsInline muted className={cameraOn ? "video-on" : ""} />
-        </div>
-        <div className="capture-tools">
-          <label className="file-button">
-            Upload image
-            <input type="file" accept="image/*" onChange={handleUpload} />
-          </label>
-          <button onClick={cameraOn ? stopCamera : startCamera}>{cameraOn ? "Stop webcam" : "Start webcam"}</button>
-          <button onClick={captureWebcam} disabled={!cameraOn}>Capture</button>
-        </div>
+          ) : <p className="subtle">No observation yet.</p>}
+        </ResultCard>
+
+        <ResultCard title="Visible issues">
+          {observations?.visible_issues?.length ? (
+            <ul className="issue-list">
+              {observations.visible_issues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          ) : <p className="subtle">No visible issues flagged in this simulation.</p>}
+        </ResultCard>
+
+        <ResultCard title="Employee notification">
+          {notification ? (
+            <>
+              <div className="card-title-row">
+                <strong>{notification.notification_title}</strong>
+                <span className={statusClass(notification.urgency)}>{notification.urgency}</span>
+              </div>
+              <p>{notification.notification_message}</p>
+              <p className="subtle">
+                {phoneResult?.delivered_to_mock_phone ? "Visible on the simulated phone." : "No simulated phone message shown."}
+              </p>
+            </>
+          ) : <p className="subtle">No notification decision yet.</p>}
+        </ResultCard>
+
+        <ResultCard title="Recommended action">
+          <p>{notification?.suggested_employee_action || "No action selected yet."}</p>
+        </ResultCard>
+
+        <ResultCard title="Meeting suggestion">
+          {meeting ? (
+            <>
+              <div className="card-title-row">
+                <strong>{meeting.should_suggest_meeting ? meeting.meeting_type : "No meeting suggested"}</strong>
+                <span>{meeting.suggested_duration_minutes} min</span>
+              </div>
+              <p>{meeting.reason}</p>
+            </>
+          ) : <p className="subtle">No meeting suggestion yet.</p>}
+        </ResultCard>
+
+        <ResultCard title="Limitations">
+          <p>{agentResponse?.limitations || "This simulation avoids identifying people and does not send real phone messages."}</p>
+        </ResultCard>
       </section>
 
-      {snapshot && topRisk && (
-        <>
-          <section className="overview">
-            <div className="panel">
-              <p className="eyebrow">Current observation</p>
-              <h2>{snapshot.observation.detected_conditions.join(", ")}</h2>
-              <p>{snapshot.digital_twin.summary}</p>
-              <div className="score-row">
-                <span className={statusClass(topRisk.status)}>{topRisk.status}</span>
-                <strong>{topRisk.score}/100</strong>
-              </div>
-            </div>
-            <div className="panel">
-              <p className="eyebrow">Top visual signal</p>
-              <h2>{topRisk.label}</h2>
-              <p>{topRisk.contributing_factors[0]}</p>
-            </div>
-          </section>
-
-          <section className="grid">
-            <div className="panel">
-              <h2>Visual Scores</h2>
-              <div className="metric-grid">
-                {Object.entries(observationMetrics).map(([key, label]) => (
-                  <div className="metric" key={key}>
-                    <span>{label}</span>
-                    <strong>{snapshot.observation[key]}</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel">
-              <h2>Digital Twin</h2>
-              <div className="stack">
-                {Object.entries(twinLabels).map(([key, label]) => (
-                  <div className="twin-row" key={key}>
-                    <span>{label}</span>
-                    <span className={statusClass(snapshot.digital_twin[key])}>{snapshot.digital_twin[key]}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="grid">
-            <div className="panel">
-              <h2>Visual Risks</h2>
-              <div className="stack">
-                {snapshot.risks.map((risk) => (
-                  <div className="risk" key={risk.id}>
-                    <div>
-                      <strong>{risk.label}</strong>
-                      <span className={statusClass(risk.status)}>{risk.status}</span>
-                    </div>
-                    <div className="bar">
-                      <span style={{ width: `${risk.score}%` }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel">
-              <h2>Employee Actions</h2>
-              <div className="stack">
-                {snapshot.recommendations.map((action) => (
-                  <div className="action" key={action.id}>
-                    <strong>{action.label}</strong>
-                    <code>{action.id}</code>
-                    <p>{action.rationale}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="grid">
-            <div className="panel">
-              <h2>Forecast</h2>
-              <p className="muted">{snapshot.forecast.horizon_hours}h Monte Carlo, {snapshot.forecast.runs} runs</p>
-              <div className="stack">
-                {snapshot.forecast.bands.slice(0, 4).map((band) => (
-                  <div className="forecast" key={band.risk_id}>
-                    <span>{band.label}</span>
-                    <strong>Expected {band.expected_score}, p90 {band.p90_score}</strong>
-                    <small>{Math.round(band.probability_high_or_critical * 100)}% chance high+</small>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel ai-panel">
-              <p className="eyebrow">{explanation?.used_ai ? "OpenAI explanation" : "Local fallback explanation"}</p>
-              <h2>Employee brief</h2>
-              <p>{explanation?.explanation}</p>
-              <div className="ids">
-                {(explanation?.approved_action_ids || []).map((id) => <code key={id}>{id}</code>)}
-              </div>
-            </div>
-          </section>
-        </>
-      )}
+      <section className="panel explanation-panel">
+        <p className="eyebrow">AI explanation</p>
+        <h2>{agentResponse?.summary || "Ready for a GardenSpace AI analysis"}</h2>
+        <p>{agentResponse?.employee_friendly_explanation || "Select a scenario or analyze an uploaded image to see the employee-friendly explanation."}</p>
+      </section>
     </main>
+  );
+}
+
+function StatusRow({ label, value }) {
+  return (
+    <div className="status-row">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ResultCard({ title, children }) {
+  return (
+    <article className="panel result-card">
+      <h2>{title}</h2>
+      {children}
+    </article>
   );
 }
 
@@ -321,214 +335,214 @@ function Style() {
       body {
         margin: 0;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f6f7f4;
-        color: #18211f;
+        background: #f4f7f1;
+        color: #17221d;
       }
       .shell {
-        width: min(1180px, calc(100% - 32px));
+        width: min(1240px, calc(100% - 32px));
         margin: 0 auto;
         padding: 28px 0 44px;
       }
+      h1, h2, p { margin-top: 0; }
+      h1 {
+        max-width: 820px;
+        margin-bottom: 0;
+        font-size: clamp(2.2rem, 6vw, 5rem);
+        line-height: .95;
+      }
+      h2 {
+        margin-bottom: 10px;
+        font-size: 1.08rem;
+        line-height: 1.25;
+      }
       .hero {
-        min-height: 230px;
+        min-height: 190px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 24px;
-        padding: 28px 0;
+        padding: 22px 0;
       }
-      h1, h2, p { margin-top: 0; }
-      h1 { max-width: 820px; margin-bottom: 12px; font-size: clamp(2.35rem, 7vw, 5.6rem); line-height: .94; }
-      h2 { margin-bottom: 12px; font-size: 1.18rem; line-height: 1.25; }
       .eyebrow {
-        margin-bottom: 10px;
-        color: #476557;
-        font-size: .78rem;
-        font-weight: 800;
+        margin-bottom: 9px;
+        color: #4f6b5a;
+        font-size: .76rem;
+        font-weight: 850;
         letter-spacing: .08em;
         text-transform: uppercase;
       }
-      .hero-copy { max-width: 640px; color: #40524e; font-size: 1.08rem; }
-      button, .file-button {
-        border: 1px solid #b8c8c0;
-        border-radius: 8px;
+      .hero-status, .scene-badge, .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        border-radius: 999px;
+        padding: 6px 10px;
+        border: 1px solid #cfdcd1;
         background: #ffffff;
-        color: #18211f;
-        cursor: pointer;
-        font: inherit;
+        font-size: .78rem;
         font-weight: 800;
-        padding: 11px 16px;
-        white-space: nowrap;
+        text-transform: uppercase;
       }
-      button:disabled {
-        cursor: not-allowed;
-        opacity: .5;
+      .sim-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #45a663;
       }
-      .capture-band {
+      .workspace {
         display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr);
+        grid-template-columns: minmax(320px, .86fr) minmax(420px, 1.14fr);
         gap: 16px;
-        margin-bottom: 16px;
         align-items: stretch;
       }
-      .camera-surface {
-        position: relative;
-        min-height: 360px;
-        border-radius: 8px;
-        overflow: hidden;
-        background: #dfe7e3;
-        border: 1px solid #d5ded9;
-      }
-      .camera-surface img, .camera-surface video {
-        width: 100%;
-        height: 100%;
-        min-height: 360px;
-        object-fit: cover;
-        display: block;
-      }
-      .camera-surface video {
-        display: none;
-        position: absolute;
-        inset: 0;
-      }
-      .camera-surface .video-on { display: block; }
-      .demo-scene {
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(120deg, #dfe8ea 0%, #f4f0e8 55%, #dce8df 100%);
-      }
-      .window {
-        position: absolute;
-        left: 32px;
-        top: 32px;
-        width: 34%;
-        height: 44%;
-        border: 10px solid rgba(255,255,255,.72);
-        background: #a8cdd0;
-      }
-      .tower {
-        position: absolute;
-        left: 52%;
-        top: 10%;
-        width: 112px;
-        height: 278px;
-        border-radius: 56px;
-        background: #f7fbf8;
-        border: 10px solid #d7e2da;
-      }
-      .tower span {
-        position: absolute;
-        width: 54px;
-        height: 30px;
-        background: #2f8f52;
-        border-radius: 100% 0 100% 0;
-      }
-      .tower span:nth-child(1) { left: -12px; top: 42px; transform: rotate(-28deg); }
-      .tower span:nth-child(2) { right: -12px; top: 88px; transform: rotate(34deg); }
-      .tower span:nth-child(3) { left: -12px; top: 148px; transform: rotate(-34deg); }
-      .tower span:nth-child(4) { right: -12px; top: 204px; transform: rotate(30deg); }
-      .reservoir {
-        position: absolute;
-        left: 48%;
-        bottom: 34px;
-        width: 178px;
-        height: 48px;
-        border-radius: 8px;
-        background: #7eb6c6;
-        border: 8px solid #e6ece9;
-      }
-      .capture-tools {
-        display: flex;
-        align-content: start;
-        align-items: start;
-        gap: 10px;
-        flex-wrap: wrap;
-        padding: 18px;
-        border: 1px solid #dbe5dd;
-        border-radius: 8px;
-        background: #ffffff;
-      }
-      .file-button input { display: none; }
-      .overview, .grid {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
-        gap: 16px;
-        margin-bottom: 16px;
-      }
       .panel {
-        background: #ffffff;
-        border: 1px solid #dbe5dd;
-        border-radius: 8px;
+        border: 1px solid #d7e2da;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, .92);
         padding: 18px;
-        box-shadow: 0 8px 24px rgba(33, 49, 39, .06);
+        box-shadow: 0 12px 30px rgba(32, 50, 39, .07);
       }
-      .metric-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-      }
-      .metric, .forecast, .action {
-        border: 1px solid #e3ece6;
-        border-radius: 8px;
-        padding: 12px;
-        background: #fbfdfb;
-      }
-      .metric span, .forecast span, .twin-row > span:first-child { display: block; color: #627368; font-size: .86rem; }
-      .metric strong { display: block; margin-top: 6px; font-size: 1.32rem; }
-      .stack { display: grid; gap: 10px; }
-      .risk > div:first-child, .score-row, .twin-row {
+      .section-head, .card-title-row, .status-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
       }
-      .status {
-        border-radius: 999px;
-        padding: 4px 8px;
-        font-size: .72rem;
-        font-weight: 900;
-        text-transform: uppercase;
+      .loading, .subtle {
+        color: #68766d;
+        font-size: .88rem;
       }
-      .status-low { background: #dff3e4; color: #176332; }
-      .status-medium { background: #fff0c7; color: #7b4d00; }
-      .status-high { background: #ffe0c8; color: #8b3900; }
-      .status-critical { background: #ffd7d7; color: #9c1b1b; }
-      .bar {
-        height: 9px;
-        margin-top: 10px;
-        border-radius: 999px;
-        background: #e8eee9;
+      .preview-frame {
+        position: relative;
+        min-height: 280px;
+        border: 1px solid #d7e2da;
+        border-radius: 12px;
         overflow: hidden;
+        background: #dfe9e0;
       }
-      .bar span {
-        display: block;
+      .preview-frame img, .preview-frame video {
+        width: 100%;
         height: 100%;
-        border-radius: inherit;
-        background: #2f855a;
+        min-height: 280px;
+        object-fit: cover;
+        display: block;
       }
-      .muted, small { color: #627368; }
-      code {
-        display: inline-block;
-        margin: 6px 6px 0 0;
-        border-radius: 6px;
-        background: #edf4ef;
-        padding: 4px 6px;
-        font-size: .78rem;
+      .preview-frame video {
+        display: none;
+        position: absolute;
+        inset: 0;
       }
+      .preview-frame .video-on { display: block; }
+      .preview-placeholder {
+        min-height: 280px;
+        display: grid;
+        place-items: center;
+        align-content: center;
+        gap: 12px;
+        text-align: center;
+        color: #5d6e63;
+      }
+      .mini-tower {
+        position: relative;
+        width: 70px;
+        height: 150px;
+        border-radius: 999px;
+        border: 8px solid #d5e1d8;
+        background: #f8fbf7;
+      }
+      .mini-tower span {
+        position: absolute;
+        width: 34px;
+        height: 20px;
+        border-radius: 100% 0 100% 0;
+        background: #2f8d54;
+      }
+      .mini-tower span:nth-child(1) { left: -10px; top: 32px; transform: rotate(-30deg); }
+      .mini-tower span:nth-child(2) { right: -10px; top: 66px; transform: rotate(34deg); }
+      .mini-tower span:nth-child(3) { left: -10px; top: 104px; transform: rotate(-30deg); }
+      .tool-row, .scenario-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      button, .button-like, select {
+        min-height: 42px;
+        border: 1px solid #b9cabe;
+        border-radius: 10px;
+        background: #ffffff;
+        color: #17221d;
+        font: inherit;
+        font-weight: 800;
+        padding: 10px 13px;
+      }
+      button, .button-like, select { cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: .5; }
+      .button-like input { display: none; }
+      .primary {
+        background: #226b42;
+        border-color: #226b42;
+        color: #ffffff;
+      }
+      .scenario-box {
+        margin-top: 18px;
+        border-top: 1px solid #e1e9e3;
+        padding-top: 16px;
+      }
+      select { min-width: min(100%, 260px); }
+      .result-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+      }
+      .result-card {
+        min-height: 190px;
+      }
+      .status-list {
+        display: grid;
+        gap: 10px;
+      }
+      .status-row {
+        border-bottom: 1px solid #edf2ee;
+        padding-bottom: 9px;
+      }
+      .status-row span {
+        color: #68766d;
+      }
+      .issue-list {
+        margin: 0;
+        padding-left: 20px;
+      }
+      .issue-list li {
+        margin-bottom: 8px;
+      }
+      .pill-low { background: #e3f4e7; color: #176332; border-color: #c7e4ce; }
+      .pill-medium { background: #fff1cc; color: #754d00; border-color: #f2d891; }
+      .pill-high { background: #ffe2d4; color: #8d3614; border-color: #efb49d; }
       .alert {
         margin-bottom: 16px;
-        border-radius: 8px;
+        border-radius: 12px;
         background: #ffe1e1;
         color: #8b1f1f;
         padding: 12px 14px;
-        font-weight: 700;
+        font-weight: 750;
       }
-      @media (max-width: 860px) {
-        .hero, .capture-band, .overview, .grid {
-          display: block;
+      .explanation-panel {
+        margin-top: 16px;
+      }
+      @media (max-width: 980px) {
+        .workspace, .result-grid {
+          grid-template-columns: 1fr;
         }
-        .refresh, .capture-tools, .panel { margin-top: 12px; }
-        .metric-grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 680px) {
+        .shell { width: min(100% - 24px, 1240px); padding-top: 18px; }
+        .hero, .section-head, .card-title-row {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        h1 { font-size: 2.25rem; }
       }
     `}</style>
   );

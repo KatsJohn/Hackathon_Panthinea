@@ -9,6 +9,7 @@ from .models import (
     PhoneNotificationResult,
     VisionObservation,
 )
+from .notification_engine import create_virtual_scene_event
 
 
 class DemoScenario(TypedDict):
@@ -62,11 +63,13 @@ def _scenario(
     employee_friendly_explanation: str,
 ) -> DemoScenario:
     phone_notification_result = _phone_result(scenario_id, notification, created_at)
+    virtual_scene_event = create_virtual_scene_event(notification, meeting_suggestion)
     agent_response = AgentResponse(
         summary=summary,
         observations=observation,
         notification=notification,
         phone_notification_result=phone_notification_result,
+        virtual_scene_event=virtual_scene_event,
         meeting_suggestion=meeting_suggestion,
         employee_friendly_explanation=employee_friendly_explanation,
         limitations=(
@@ -79,6 +82,7 @@ def _scenario(
         "vision_observation": observation,
         "notification_decision": notification,
         "phone_notification_result": phone_notification_result,
+        "virtual_scene_event": virtual_scene_event,
         "meeting_suggestion": meeting_suggestion,
         "agent_response": agent_response,
     }

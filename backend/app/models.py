@@ -11,6 +11,8 @@ AreaStatus = Literal["free", "occupied", "cluttered", "unknown"]
 UrgencyLevel = Literal["low", "medium", "high"]
 NotificationChannel = Literal["mock_phone"]
 NotificationStatus = Literal["created", "sent", "failed"]
+VirtualAnimationState = Literal["idle", "reading_phone", "meeting"]
+VirtualNextVisualAction = Literal["none", "walk_to_garden", "check_reservoir", "tidy_garden", "start_meeting"]
 
 
 class CameraObservation(BaseModel):
@@ -80,11 +82,21 @@ class MeetingSuggestion(BaseModel):
     suggested_duration_minutes: int
 
 
+class VirtualSceneEvent(BaseModel):
+    phone_message_visible: bool
+    phone_title: str
+    phone_message: str
+    animation_state: VirtualAnimationState
+    next_visual_action: VirtualNextVisualAction
+    event_note: str
+
+
 class AgentResponse(BaseModel):
     summary: str
     observations: VisionObservation
     notification: NotificationDecision
     phone_notification_result: PhoneNotificationResult
+    virtual_scene_event: VirtualSceneEvent | None = None
     meeting_suggestion: MeetingSuggestion
     employee_friendly_explanation: str
     limitations: str
