@@ -1,4 +1,4 @@
-from .models import DigitalTwinState, RiskScore, SensorReading
+from .models import CameraObservation, DigitalTwinState, RiskScore
 
 
 def _max_status(risks: list[RiskScore], risk_ids: set[str]) -> str:
@@ -8,24 +8,23 @@ def _max_status(risks: list[RiskScore], risk_ids: set[str]) -> str:
     return max(selected, key=lambda risk: risk.score).status
 
 
-def build_digital_twin(reading: SensorReading, risks: list[RiskScore]) -> DigitalTwinState:
+def build_digital_twin(observation: CameraObservation, risks: list[RiskScore]) -> DigitalTwinState:
     highest = max(risks, key=lambda risk: risk.score)
     trend = "stable"
     if highest.score >= 70:
         trend = f"watch {highest.label.lower()} closely over the next cycle"
-    elif reading.flow_rate < 1.0 or reading.humidity > 75:
-        trend = "conditions may worsen without operator attention"
+    elif observation.reservoir_check_score > 60 or observation.neglect_score > 55:
+        trend = "conditions may look worse without employee attention"
 
     return DigitalTwinState(
-        water_quality=_max_status(risks, {"nutrient_imbalance", "algae_formation"}),
-        root_zone_health=_max_status(risks, {"root_disease", "mold_fungal"}),
-        irrigation_flow_condition=_max_status(risks, {"clogged_irrigation", "dehydration_stress"}),
-        environmental_comfort=_max_status(risks, {"dehydration_stress", "mold_fungal"}),
-        plant_stress_level=highest.status,
+        workplace_area_condition=_max_status(risks, {"neglected_area", "crowded_growth"}),
+        plant_appearance=_max_status(risks, {"dry_appearance", "wilted_appearance", "crowded_growth"}),
+        reservoir_attention=_max_status(risks, {"reservoir_attention"}),
+        team_engagement=_max_status(risks, {"workplace_engagement"}),
+        maintenance_urgency=highest.status,
         predicted_near_future_trend=trend,
         summary=(
-            f"The tower is currently {highest.status} for {highest.label.lower()} "
-            f"with pH {reading.ph}, conductivity {reading.conductivity} mS/cm, "
-            f"and flow {reading.flow_rate} L/min."
+            f"The tower camera view is currently {highest.status} for {highest.label.lower()} "
+            f"with a plant health index of {observation.plant_health_index}/100."
         ),
     )

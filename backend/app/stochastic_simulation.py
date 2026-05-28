@@ -1,16 +1,16 @@
 from random import Random
 
-from .models import ForecastBand, ForecastResponse, RiskScore, SensorReading
+from .models import CameraObservation, ForecastBand, ForecastResponse, RiskScore
 
 
 def run_monte_carlo_forecast(
-    reading: SensorReading,
+    observation: CameraObservation,
     risks: list[RiskScore],
     runs: int = 250,
     horizon_hours: int = 6,
 ) -> ForecastResponse:
-    """Run stochastic demo forecasting only; never use this for safety decisions."""
-    seed = int(sum(ord(char) for char in reading.timestamp))
+    """Run stochastic demo forecasting only; never use this for action approval."""
+    seed = int(sum(ord(char) for char in observation.timestamp + observation.image_name))
     rng = Random(seed)
     bands: list[ForecastBand] = []
 
@@ -18,13 +18,13 @@ def run_monte_carlo_forecast(
         samples = []
         for _ in range(runs):
             drift = 0
-            if risk.id in {"algae_formation", "root_disease"} and reading.water_temperature > 22:
-                drift += rng.uniform(1, 9)
-            if risk.id in {"clogged_irrigation", "dehydration_stress"} and reading.flow_rate < 1.1:
+            if risk.id in {"dry_appearance", "wilted_appearance"} and observation.dryness_score > 55:
+                drift += rng.uniform(1, 10)
+            if risk.id == "reservoir_attention" and observation.reservoir_check_score > 55:
                 drift += rng.uniform(2, 12)
-            if risk.id == "mold_fungal" and reading.humidity > 70:
+            if risk.id == "neglected_area" and observation.neglect_score > 55:
                 drift += rng.uniform(2, 10)
-            if risk.id == "nutrient_imbalance" and (reading.ph < 6.0 or reading.ph > 6.8):
+            if risk.id == "crowded_growth" and observation.crowding_score > 60:
                 drift += rng.uniform(1, 8)
 
             noise = rng.gauss(0, 6)
@@ -49,6 +49,6 @@ def run_monte_carlo_forecast(
     return ForecastResponse(
         horizon_hours=horizon_hours,
         runs=runs,
-        note="Monte Carlo output is for digital twin forecasting only, not safety validation or hardware control.",
+        note="Monte Carlo output is for demo forecasting only, not action approval or hardware control.",
         bands=bands,
     )
