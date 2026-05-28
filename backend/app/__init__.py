@@ -1,0 +1,1 @@
+"""GardenMind AI backend package."""
