@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .camera_source import analyze_image, get_demo_observation
+from .calendar_planner import create_mock_calendar_event
 from .demo_scenarios import get_demo_scenario, list_demo_scenarios
 from .digital_twin import build_digital_twin
 from .garden_agent import explain_garden_state
@@ -13,6 +14,7 @@ from .models import (
     EmployeeRecipient,
     ExplanationRequest,
     ImageAnalysisRequest,
+    MeetingSuggestion,
     NotificationDecision,
     PhoneNotification,
     PhoneNotificationResult,
@@ -20,6 +22,7 @@ from .models import (
     VirtualSceneEvent,
     VisionObservation,
 )
+from .mock_phone import clear_mock_phone_notifications, get_mock_phone_notifications, send_to_mock_phone
 from .notification_engine import create_notification_decision, create_virtual_scene_event
 from .risk_engine import calculate_risks, get_recommendations
 from .stochastic_simulation import run_monte_carlo_forecast
@@ -66,22 +69,21 @@ MOCK_EMPLOYEE = EmployeeRecipient(
 
 def build_mock_phone_result(notification: NotificationDecision) -> PhoneNotificationResult:
     delivered = notification.should_notify
+    phone_notification = PhoneNotification(
+        notification_id=f"mock-phone-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}",
+        recipient=MOCK_EMPLOYEE,
+        title=notification.notification_title,
+        message=notification.notification_message,
+        urgency=notification.urgency,
+        status="created",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    if delivered:
+        return send_to_mock_phone(phone_notification)
     return PhoneNotificationResult(
-        notification=PhoneNotification(
-            notification_id=f"mock-phone-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}",
-            recipient=MOCK_EMPLOYEE,
-            title=notification.notification_title,
-            message=notification.notification_message,
-            urgency=notification.urgency,
-            status="sent" if delivered else "created",
-            created_at=datetime.now(UTC).isoformat(),
-        ),
+        notification=phone_notification,
         delivered_to_mock_phone=delivered,
-        delivery_note=(
-            "Simulated phone notification delivered to the in-app mock phone."
-            if delivered
-            else "No simulated phone notification was sent because no employee action is needed right now."
-        ),
+        delivery_note="No simulated phone notification was sent because no employee action is needed right now.",
     )
 
 
@@ -106,7 +108,9 @@ def api_demo_scenario(scenario_name: str) -> AgentResponse:
         scenario = get_demo_scenario(scenario_name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown demo scenario: {scenario_name}") from exc
-    return scenario["agent_response"]
+    agent_response = scenario["agent_response"]
+    phone_notification_result = build_mock_phone_result(agent_response.notification)
+    return agent_response.model_copy(update={"phone_notification_result": phone_notification_result})
 
 
 @app.post("/api/vision/analyze", response_model=AgentResponse)
@@ -138,6 +142,22 @@ def api_notifications_preview(observation: VisionObservation) -> NotificationDec
 @app.post("/api/scene/preview", response_model=VirtualSceneEvent)
 def api_scene_preview(notification_decision: NotificationDecision) -> VirtualSceneEvent:
     return create_virtual_scene_event(notification_decision)
+
+
+@app.get("/api/mock-phone/notifications", response_model=list[PhoneNotification])
+def api_mock_phone_notifications() -> list[PhoneNotification]:
+    return get_mock_phone_notifications()
+
+
+@app.post("/api/mock-phone/clear")
+def api_mock_phone_clear() -> dict[str, str]:
+    clear_mock_phone_notifications()
+    return {"status": "cleared"}
+
+
+@app.post("/api/calendar/mock-event")
+def api_calendar_mock_event(meeting_suggestion: MeetingSuggestion) -> dict[str, str | int]:
+    return create_mock_calendar_event(meeting_suggestion)
 
 
 @app.get("/observation")

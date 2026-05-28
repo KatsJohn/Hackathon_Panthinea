@@ -23,11 +23,37 @@ function App() {
   const [imageName, setImageName] = useState("");
   const [scenarioNames, setScenarioNames] = useState([]);
   const [selectedScenario, setSelectedScenario] = useState(DEFAULT_SCENARIO);
+  const [phoneNotifications, setPhoneNotifications] = useState([]);
+  const [mockCalendarEvent, setMockCalendarEvent] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [cameraOn, setCameraOn] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+
+  async function loadMockPhoneNotifications() {
+    const response = await fetch(`${API_BASE}/api/mock-phone/notifications`);
+    if (!response.ok) {
+      throw new Error(`Mock phone request failed (${response.status})`);
+    }
+    setPhoneNotifications(await response.json());
+  }
+
+  async function clearMockPhone() {
+    try {
+      setLoading(true);
+      setError("");
+      const response = await fetch(`${API_BASE}/api/mock-phone/clear`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Clear phone failed (${response.status})`);
+      }
+      await loadMockPhoneNotifications();
+    } catch (currentError) {
+      setError(currentError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function loadScenario(scenarioName = selectedScenario) {
     try {
@@ -38,7 +64,9 @@ function App() {
         throw new Error(`Scenario request failed (${response.status})`);
       }
       setAgentResponse(await response.json());
+      setMockCalendarEvent(null);
       setSelectedScenario(scenarioName);
+      await loadMockPhoneNotifications();
     } catch (currentError) {
       setError(currentError.message);
     } finally {
@@ -60,6 +88,8 @@ function App() {
       const initialScenario = names.includes(DEFAULT_SCENARIO) ? DEFAULT_SCENARIO : names[0];
       if (initialScenario) {
         await loadScenario(initialScenario);
+      } else {
+        await loadMockPhoneNotifications();
       }
     } catch (currentError) {
       setError(currentError.message);
@@ -90,6 +120,8 @@ function App() {
         throw new Error(`Image analysis failed (${response.status})`);
       }
       setAgentResponse(await response.json());
+      setMockCalendarEvent(null);
+      await loadMockPhoneNotifications();
     } catch (currentError) {
       setError(currentError.message);
     } finally {
@@ -150,6 +182,32 @@ function App() {
     setError("");
   }
 
+  async function createMockCalendarEvent() {
+    const meetingSuggestion = agentResponse?.meeting_suggestion;
+    if (!meetingSuggestion) {
+      setError("Load a scenario or analyze an image before creating a mock meeting suggestion.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError("");
+      const response = await fetch(`${API_BASE}/api/calendar/mock-event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(meetingSuggestion),
+      });
+      if (!response.ok) {
+        throw new Error(`Mock calendar request failed (${response.status})`);
+      }
+      setMockCalendarEvent(await response.json());
+    } catch (currentError) {
+      setError(currentError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadInitialDemo();
     return () => stopCamera();
@@ -167,6 +225,7 @@ function App() {
     next_visual_action: "none",
     event_note: "Simulation waiting for analysis.",
   };
+  const latestPhoneNotification = phoneNotifications[phoneNotifications.length - 1];
 
   return (
     <main className="shell">
@@ -221,6 +280,14 @@ function App() {
             <button className="primary" onClick={analyzeSelectedImage} disabled={!imageBase64 || loading}>Analyze</button>
           </div>
           <p className="subtle">Images are sent only to the backend. No OpenAI API key is present in frontend code.</p>
+          <div className="privacy-notice">
+            <p className="eyebrow">Privacy notice</p>
+            <p>
+              GardenSpace AI analyzes the tower garden and surrounding space. It does not identify employees,
+              analyze faces, track individuals, or make sensitive personal inferences. Images are used for
+              plant-care and space-status analysis only. In this prototype, images are not stored permanently.
+            </p>
+          </div>
 
           <div className="scenario-box">
             <div>
@@ -244,6 +311,13 @@ function App() {
 
         <VirtualGardenScene virtualSceneEvent={sceneEvent} />
       </section>
+
+      <EmployeePhonePanel
+        latestNotification={latestPhoneNotification}
+        notificationCount={phoneNotifications.length}
+        onClear={clearMockPhone}
+        loading={loading}
+      />
 
       <section className="result-grid">
         <ResultCard title="Plant / space status">
@@ -292,6 +366,20 @@ function App() {
                 <span>{meeting.suggested_duration_minutes} min</span>
               </div>
               <p>{meeting.reason}</p>
+              <button className="calendar-button" onClick={createMockCalendarEvent} disabled={loading}>
+                Create Mock Meeting Suggestion
+              </button>
+              {mockCalendarEvent && (
+                <div className="calendar-event">
+                  <p className="eyebrow">Mock calendar event</p>
+                  <strong>{mockCalendarEvent.title}</strong>
+                  <StatusRow label="Time" value={mockCalendarEvent.suggested_time} />
+                  <StatusRow label="Duration" value={`${mockCalendarEvent.suggested_duration_minutes} min`} />
+                  <StatusRow label="Location" value={mockCalendarEvent.location} />
+                  <p>{mockCalendarEvent.reason}</p>
+                  <p className="subtle">Simulation only. No real calendar event or invite was created.</p>
+                </div>
+              )}
             </>
           ) : <p className="subtle">No meeting suggestion yet.</p>}
         </ResultCard>
@@ -325,6 +413,40 @@ function ResultCard({ title, children }) {
       <h2>{title}</h2>
       {children}
     </article>
+  );
+}
+
+function EmployeePhonePanel({ latestNotification, notificationCount, onClear, loading }) {
+  return (
+    <section className="phone-band">
+      <div className="phone-copy">
+        <p className="eyebrow">Employee Phone</p>
+        <h2>Simulated hackathon notification inbox</h2>
+        <p className="subtle">This panel shows only mock GardenSpace AI notifications. No real SMS is sent.</p>
+        <button onClick={onClear} disabled={loading || notificationCount === 0}>Clear Phone</button>
+      </div>
+      <div className="employee-phone">
+        <div className="phone-speaker" />
+        {latestNotification ? (
+          <div className="phone-card">
+            <div className="card-title-row">
+              <strong>{latestNotification.title}</strong>
+              <span className={statusClass(latestNotification.urgency)}>{latestNotification.urgency}</span>
+            </div>
+            <p>{latestNotification.message}</p>
+            <div className="phone-meta">
+              <span>Status: {latestNotification.status}</span>
+              <span>To: {latestNotification.recipient?.display_name || "Mock employee"}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="phone-empty">
+            <strong>No mock notifications</strong>
+            <p>Run a scenario like dry plants to show the employee receiving the agent message.</p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -394,6 +516,55 @@ function Style() {
         grid-template-columns: minmax(320px, .86fr) minmax(420px, 1.14fr);
         gap: 16px;
         align-items: stretch;
+      }
+      .phone-band {
+        display: grid;
+        grid-template-columns: minmax(280px, .8fr) minmax(280px, 1.2fr);
+        gap: 16px;
+        align-items: center;
+        margin-top: 16px;
+        border: 1px solid #d7e2da;
+        border-radius: 14px;
+        background: #ffffff;
+        padding: 18px;
+        box-shadow: 0 12px 30px rgba(32, 50, 39, .07);
+      }
+      .phone-copy button {
+        margin-top: 10px;
+      }
+      .employee-phone {
+        width: min(100%, 360px);
+        min-height: 270px;
+        margin-left: auto;
+        border: 12px solid #21332b;
+        border-radius: 34px;
+        background: linear-gradient(180deg, #edf5ef, #dce9e0);
+        padding: 18px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+      }
+      .phone-speaker {
+        width: 64px;
+        height: 6px;
+        margin: 0 auto 18px;
+        border-radius: 999px;
+        background: #21332b;
+        opacity: .8;
+      }
+      .phone-card, .phone-empty {
+        border-radius: 18px;
+        background: rgba(255,255,255,.96);
+        border: 1px solid #d7e2da;
+        padding: 14px;
+        box-shadow: 0 10px 24px rgba(32, 50, 39, .08);
+      }
+      .phone-card p, .phone-empty p {
+        color: #415047;
+      }
+      .phone-meta {
+        display: grid;
+        gap: 5px;
+        color: #68766d;
+        font-size: .82rem;
       }
       .panel {
         border: 1px solid #d7e2da;
@@ -489,6 +660,32 @@ function Style() {
         border-top: 1px solid #e1e9e3;
         padding-top: 16px;
       }
+      .privacy-notice {
+        margin-top: 12px;
+        border: 1px solid #d4e3d8;
+        border-radius: 12px;
+        background: #f2f8f3;
+        padding: 12px;
+      }
+      .privacy-notice p:last-child {
+        margin-bottom: 0;
+        color: #3d5145;
+        font-size: .9rem;
+        line-height: 1.45;
+      }
+      .calendar-button {
+        margin-top: 8px;
+      }
+      .calendar-event {
+        display: grid;
+        gap: 8px;
+        margin-top: 14px;
+        border-top: 1px solid #e1e9e3;
+        padding-top: 12px;
+      }
+      .calendar-event strong {
+        display: block;
+      }
       select { min-width: min(100%, 260px); }
       .result-grid {
         display: grid;
@@ -532,8 +729,11 @@ function Style() {
         margin-top: 16px;
       }
       @media (max-width: 980px) {
-        .workspace, .result-grid {
+        .workspace, .result-grid, .phone-band {
           grid-template-columns: 1fr;
+        }
+        .employee-phone {
+          margin-left: 0;
         }
       }
       @media (max-width: 680px) {
